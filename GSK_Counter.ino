@@ -57,7 +57,6 @@ int valve_angle; //значение угла открытия вентиляци
 //Массив для данных с терминала
 char incomingBytes[15];
 
-
 String odometr_data; //строка пробега считанного со счетчика функцией GetOdo
 String voltage_data; // строка значения напряжения считанного функцией GetVoltage по фазе
 String current_data; // строка значения тока считанного функцией GetCurrent по фазе
