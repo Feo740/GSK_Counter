@@ -1,4 +1,6 @@
-#include <SoftwareSerial.h> //библиотека для работы с RS485
+#include <Arduino.h>
+
+//#include <SoftwareSerial.h> //библиотека для работы с RS485
 #include <ETH.h>
 #include <WiFi.h>
 #include <HTTPClient.h> // для работы с гугл таблицами
@@ -7,12 +9,11 @@ extern "C" {
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 }
-
 //-------- порты для rs 485
 #define SSerialRx        19  // Serial Receive pin RO
 #define SSerialTx        17   // Serial Transmit pin DI
 //-------- инициализация
-SoftwareSerial RS485Serial(SSerialRx, SSerialTx); // Rx, Tx
+//SoftwareSerial RS485Serial(SSerialRx, SSerialTx); // Rx, Tx
 //// линия управления передачи приема
 #define SerialControl 18  // RS485 Direction control 5 or 18
 /////// флаг приема передачи
@@ -26,7 +27,8 @@ SoftwareSerial RS485Serial(SSerialRx, SSerialTx); // Rx, Tx
 #define MQTT_PASSWORD "ferrari220"
 // концевик заслонки вентиляции
 #define LIMSW_X 16
-
+//-------- Инициализация аппаратного UART (UART1)
+HardwareSerial RS485Serial(1);  // Используем UART1
 
 /// создаем объекты для управления MQTT-клиентом:
 ///Создаем объект для управления MQTT-клиентом и таймеры, которые понадобятся для повторного подключения к MQTT-брокеру или WiFi-роутеру, если связь вдруг оборвется.
@@ -34,6 +36,47 @@ AsyncMqttClient mqttClient;
 TimerHandle_t mqttReconnectTimer;
 TimerHandle_t wifiReconnectTimer;
 
+unsigned int crc16MODBUS(byte *s, int count) {
+  unsigned int crcTable[] = {
+        0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
+        0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
+        0xCC01, 0x0CC0, 0x0D80, 0xCD41, 0x0F00, 0xCFC1, 0xCE81, 0x0E40,
+        0x0A00, 0xCAC1, 0xCB81, 0x0B40, 0xC901, 0x09C0, 0x0880, 0xC841,
+        0xD801, 0x18C0, 0x1980, 0xD941, 0x1B00, 0xDBC1, 0xDA81, 0x1A40,
+        0x1E00, 0xDEC1, 0xDF81, 0x1F40, 0xDD01, 0x1DC0, 0x1C80, 0xDC41,
+        0x1400, 0xD4C1, 0xD581, 0x1540, 0xD701, 0x17C0, 0x1680, 0xD641,
+        0xD201, 0x12C0, 0x1380, 0xD341, 0x1100, 0xD1C1, 0xD081, 0x1040,
+        0xF001, 0x30C0, 0x3180, 0xF141, 0x3300, 0xF3C1, 0xF281, 0x3240,
+        0x3600, 0xF6C1, 0xF781, 0x3740, 0xF501, 0x35C0, 0x3480, 0xF441,
+        0x3C00, 0xFCC1, 0xFD81, 0x3D40, 0xFF01, 0x3FC0, 0x3E80, 0xFE41,
+        0xFA01, 0x3AC0, 0x3B80, 0xFB41, 0x3900, 0xF9C1, 0xF881, 0x3840,
+        0x2800, 0xE8C1, 0xE981, 0x2940, 0xEB01, 0x2BC0, 0x2A80, 0xEA41,
+        0xEE01, 0x2EC0, 0x2F80, 0xEF41, 0x2D00, 0xEDC1, 0xEC81, 0x2C40,
+        0xE401, 0x24C0, 0x2580, 0xE541, 0x2700, 0xE7C1, 0xE681, 0x2640,
+        0x2200, 0xE2C1, 0xE381, 0x2340, 0xE101, 0x21C0, 0x2080, 0xE041,
+        0xA001, 0x60C0, 0x6180, 0xA141, 0x6300, 0xA3C1, 0xA281, 0x6240,
+        0x6600, 0xA6C1, 0xA781, 0x6740, 0xA501, 0x65C0, 0x6480, 0xA441,
+        0x6C00, 0xACC1, 0xAD81, 0x6D40, 0xAF01, 0x6FC0, 0x6E80, 0xAE41,
+        0xAA01, 0x6AC0, 0x6B80, 0xAB41, 0x6900, 0xA9C1, 0xA881, 0x6840,
+        0x7800, 0xB8C1, 0xB981, 0x7940, 0xBB01, 0x7BC0, 0x7A80, 0xBA41,
+        0xBE01, 0x7EC0, 0x7F80, 0xBF41, 0x7D00, 0xBDC1, 0xBC81, 0x7C40,
+        0xB401, 0x74C0, 0x7580, 0xB541, 0x7700, 0xB7C1, 0xB681, 0x7640,
+        0x7200, 0xB2C1, 0xB381, 0x7340, 0xB101, 0x71C0, 0x7080, 0xB041,
+        0x5000, 0x90C1, 0x9181, 0x5140, 0x9301, 0x53C0, 0x5280, 0x9241,
+        0x9601, 0x56C0, 0x5780, 0x9741, 0x5500, 0x95C1, 0x9481, 0x5440,
+        0x9C01, 0x5CC0, 0x5D80, 0x9D41, 0x5F00, 0x9FC1, 0x9E81, 0x5E40,
+        0x5A00, 0x9AC1, 0x9B81, 0x5B40, 0x9901, 0x59C0, 0x5880, 0x9841,
+        0x8801, 0x48C0, 0x4980, 0x8941, 0x4B00, 0x8BC1, 0x8A81, 0x4A40,
+        0x4E00, 0x8EC1, 0x8F81, 0x4F40, 0x8D01, 0x4DC0, 0x4C80, 0x8C41,
+        0x4400, 0x84C1, 0x8581, 0x4540, 0x8701, 0x47C0, 0x4680, 0x8641,
+        0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
+    };
+    unsigned int crc = 0xFFFF;
+    for(int i = 0; i < count; i++) {
+        crc = ((crc >> 8) ^ crcTable[(crc ^ s[i]) & 0xFF]);
+    }
+    return crc;
+}
 /////// команды
 //byte testConnect[] = { 0x00, 0x00 };
 byte testConnect[] = { 0x16, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01}; // пакет подключения к счетчику
@@ -48,12 +91,10 @@ byte Current[]     = { 0x00, 0x08, 0x16, 0x21 };//  ток фаза 1
 byte sumPower[]    = { 0x1, 0x08, 0x16, 0x08 };// команда запроса потребляемой мощности
 byte odometr[]     = { 0x1, 0x05, 0x00, 0x00 }; // команда запроса общего пробега
 byte p_v[]         = { 0x1, 0x08, 0x11, 0x11 }; // команда запроса напряжения по фазе
-byte sensor_oil[]  = { 0x28, 0x90, 0xC3, 0x5, 0x5, 0x0, 0x0, 0x77 };// датчик температуры масла
 byte response[19];
 int byteReceived;
 int byteSend;
 int netAdr;
-int valve_angle; //значение угла открытия вентиляционной заслонки 0-100%
 //Массив для данных с терминала
 char incomingBytes[15];
 
@@ -87,12 +128,102 @@ unsigned long voltageP = 0; ///< Техническая переменная с�
 const char* ssid = "4G-UFI-3a43";
 const char* password = "1234567890";
 String GOOGLE_SCRIPT_ID = "AKfycbxwurwRRddUcZicLEqtov0QGkh9jDIjnCa8uorSOR40XKirSNvfyvXQqiIgGy0tZUTZ"; //ID Google таблички
-
-DHT dht(DHTPIN, DHTTYPE);
-DHT dht2(DHTPIN2, DHTTYPE);
 IPAddress ip;
+//Создаем структуру для хранения связной информации гараж-счетчик-одометр
+struct GarageData {
+  uint16_t garageNumber;      // трёхзначный номер гаража (0–999)
+  uint32_t meterNumber;       // номер счётчика 
+  float    odometerReading;   // показание (кВт·ч)
+  bool     isValid;           // флаг: удалось ли успешно опросить счётчик
+};
 
-GStepper2<STEPPER4WIRE> stepper(2048, 33, 25, 26, 27); // кол-во шагов,пины шаговика
+//Заполняем массив струтур
+GarageData garages[] = {
+  {404, 40, 5100.0f, true},
+  {406, 36, 18.41f, true},
+  {407, 69, 2058.2f, true},
+  // … ещё 67 записей
+};
+// определяем размер массива
+const int GARAGES_COUNT = sizeof(garages) / sizeof(garages[0]); // определяем размер массива
+// функция вывода в формате CVS
+void printGarageListCSV() {
+  Serial.println("garage,meter,reading,status");
+  for (int i = 0; i < GARAGES_COUNT; i++) {
+    char buf[16];
+    dtostrf(garages[i].odometerReading, 8, 2, buf);
+    Serial.print(garages[i].garageNumber);
+    Serial.print(',');
+    Serial.print(garages[i].meterNumber);
+    Serial.print(',');
+    Serial.print(buf);
+    Serial.print(',');
+    Serial.println(garages[i].isValid ? "OK" : "NO_DATA");
+  }
+}
+
+
+// функция  вывода в удобоваримом формате
+void printGarageList() {
+  // Заголовок таблицы
+  Serial.println("Garage | Meter      | Reading   | Status");
+  Serial.println("-------|------------|-----------|---------");
+
+  for (int i = 0; i < GARAGES_COUNT; i++) {
+    Serial.print(garages[i].garageNumber);
+    Serial.print("      | ");
+    Serial.print(garages[i].meterNumber);
+    Serial.print(" | ");
+
+    // Форматируем показание до 2 знаков после запятой
+    char buffer[16];
+    dtostrf(garages[i].odometerReading, 8, 2, buffer);
+    Serial.print(buffer);
+    Serial.print(" | ");
+
+    if (garages[i].isValid) {
+      Serial.println("OK");
+    } else {
+      Serial.println("NO DATA");
+    }
+  }
+}
+//обработка команд терминала
+void handleCommand(const String& cmdRaw) {
+  String cmd = cmdRaw;
+  cmd.trim();
+
+  if (cmd == "spisok") {
+    printGarageList();
+    return;
+  }
+
+  if (cmd.startsWith("find ")) {
+    String numStr = cmd.substring(5);
+    uint16_t target = numStr.toInt();
+    bool found = false;
+
+    for (int i = 0; i < GARAGES_COUNT; i++) {
+      if (garages[i].garageNumber == target) {
+        Serial.print("Гараж: "); Serial.print(garages[i].garageNumber);
+        Serial.print(", счётчик: "); Serial.print(garages[i].meterNumber);
+        Serial.print(", показание: ");
+        char buf[16];
+        dtostrf(garages[i].odometerReading, 8, 2, buf);
+        Serial.println(buf);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      Serial.println("Гараж не найден.");
+    }
+    return;
+  }
+
+  Serial.println("Неизвестная команда. Доступные: spisok, find <номер>, help");
+}
+
 
 /*!
  \brief функция подключения к сети wifi
@@ -110,6 +241,43 @@ void connectToMqtt() {
   Serial.println("Connecting to MQTT...");
              //  "Подключаемся к MQTT... "
   mqttClient.connect();
+}
+
+void send(byte *cmd, int s, byte *response) {
+ // Serial.print("sending...");
+  unsigned int crc = crc16MODBUS(cmd, s);
+  unsigned int crc1 = crc & 0xFF;
+  unsigned int crc2 = (crc>>8) & 0xFF;
+  delay(10);
+  // Переключаем в режим передачи
+  digitalWrite(SerialControl, RS485Transmit);  // Init Transceiver
+  delay(1);  // Небольшая задержка для стабилизации
+       for(int i=0; i<s; i++)
+       {
+              RS485Serial.write(cmd[i]);
+       }
+  RS485Serial.write(crc1);
+  RS485Serial.write(crc2);
+  RS485Serial.flush();  // Ждём окончания передачи
+
+  // Переключаем в режим приёма
+  digitalWrite(SerialControl, RS485Receive);  // Init Transceiver
+  delay(2);// Даем время счётчику на ответ
+  int i = 0;
+  unsigned long timeout = millis() + 1000;  // Таймаут 1 сек
+  
+  while (millis() < timeout && i < 19) {
+    if (RS485Serial.available()) {
+      response[i++] = RS485Serial.read();
+      timeout = millis() + 100;  // Обновляем таймаут при получении байта
+    }
+  }
+
+  // Обнуляем остатки, если пришло меньше
+  while (i < 19) {
+    response[i++] = 0;
+  }
+
 }
 
 //Функция переподключения к Wifi и MQTT  при обрыве связи
@@ -189,146 +357,70 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
     //Serial.print((char)payload[i]);
     messageTemp += (char)payload[i];
   }
-  // проверяем, получено ли MQTT-сообщение в топике «phone/Zopen»:
-  if (strcmp(topic, "phone/Zopen") == 0) {
-    if (messageTemp == "1" && open_flag == "0") {
-    open_flag_byte=1;
-  } else {
-            open_flag_byte = 0;
-                }
-  }
-  // проверяем, получено ли MQTT-сообщение в топике «phone/Counter»:
-  if (strcmp(topic, "phone/Counter") == 0) {
-    if (messageTemp == "1") {
-      flag = 1;
-          }
-  }
-  // проверяем, получено ли MQTT-сообщение в топике "phone/Went"
-  if (strcmp(topic, "phone/Went") == 0) {
-    if (messageTemp == "1") {
-      relay_flag = 1;
-          }
-    if (messageTemp == "0") {
-            relay_flag = 0;
-                }
-  }
 
-  // проверяем, получено ли MQTT-сообщение в топике "phone/Went_valve"
-  if (strcmp(topic, "phone/Went_valve") == 0) {
-    valve_angle=messageTemp.toInt();
-  }
+
+ 
 
   }
 
 void setup() {
-
+Serial.begin(9600);  // Отладочный вывод через USB (UART0)
   // настраиваем сеть
-RS485Serial.begin(9600);
-Serial.begin(9600);
+RS485Serial.begin(9600, SERIAL_8N1, SSerialRx, SSerialTx);  // UART1, пины RX=19, TX=17
+
 // 5 пин в режим выхода
 pinMode(SerialControl, OUTPUT);
-// 35 пин в режим выхода
-pinMode(DHTRELAYPIN, OUTPUT);
-digitalWrite(DHTRELAYPIN,HIGH);
+
 // ставим на прием
-digitalWrite(SerialControl, RS485Receive);
+digitalWrite(SerialControl, RS485Receive);// По умолчанию — приём
 //delay(300);
 
-//настройка сети
-mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
-wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
-connectToWifi();
-WiFi.onEvent(WiFiEvent);
+//настройка сети mqtt и wifi пока не используем
+//mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
+//wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
+//connectToWifi();
+//WiFi.onEvent(WiFiEvent);
 
-mqttClient.onConnect(onMqttConnect);
-mqttClient.onDisconnect(onMqttDisconnect);
-mqttClient.onSubscribe(onMqttSubscribe);
-mqttClient.onUnsubscribe(onMqttUnsubscribe);
-mqttClient.onMessage(onMqttMessage);
-//mqttClient.onPublish(onMqttPublish);
-mqttClient.setServer(MQTT_HOST, MQTT_PORT);
-mqttClient.setCredentials(MQTT_USERNAME, MQTT_PASSWORD);
+//mqttClient.onConnect(onMqttConnect);
+//mqttClient.onDisconnect(onMqttDisconnect);
+//mqttClient.onSubscribe(onMqttSubscribe);
+//mqttClient.onUnsubscribe(onMqttUnsubscribe);
+//mqttClient.onMessage(onMqttMessage);
+//mqttClient.onPublish(onMqttPublish); и так был в комментарии
+//mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+//mqttClient.setCredentials(MQTT_USERNAME, MQTT_PASSWORD);
 
-Serial.println(" ");
-Serial.println("Start_v02.01\r\n");
+while (!Serial) {}
+  Serial.println("Система готова. Введите 'spisok' для вывода списка гаражей.");
 
-dht22 = millis();
-dht22_power = millis();
-p_counter = millis();
-dht.begin();
-dht2.begin();
-pinMode(RELAY,OUTPUT);
-//pinMode(DHTRELAYPIN,OUTPUT); //задаем пин реле датчиков влажности как выход
 
-// пуллапим. Кнопки замыкают на GND
-pinMode(LIMSW_X, INPUT_PULLUP);
-//stepper.setRunMode(FOLLOW_POS);
-homing(); // по умолчанию заслонку закрываем
 }
 
-//Функция закрытия заслонки
-void homing() {
-  open_flag = "0";
-  // сообщаем, что заслонка закрылась
-  String var = "ESP32Counter/Zopen";
-  char var2[19];
-  var.toCharArray(var2,19);
-  uint16_t packetIdPub = mqttClient.publish(var2, 1, true, open_flag.c_str());
-  stepper.disable();                // тормозим, приехали
-  stepper.reset(); // сбросить текущую позицию в 0
-  p_clapan = millis();
-  if (digitalRead(LIMSW_X)) {       // если концевик X не нажат
-    stepper.setSpeed(-100);       // ось Х, -10 шаг/сек
-    while (digitalRead(LIMSW_X)) {  // пока кнопка не нажата
-      stepper.tick();               // крутим
-      if ((millis()-p_clapan)>=period_clapan){ // проверяем, не застряла ли наша заслонка в открытом виде
-        // пишем мкутт сообщение об ошибке
-        error_flag = "1";
-        open_flag = "1";
-        //сообщаем об ошибке
-        String var = "ESP32Counter/Zerror";
-        char var1[20];
-        var.toCharArray(var1,20);
-        uint16_t packetIdPub = mqttClient.publish(var1, 1, true, error_flag.c_str());
-        // сообщаем что заслонка осталась открыта
-        var = "ESP32Counter/Zopen";
-        char var2[19];
-        var.toCharArray(var2,19);
-        uint16_t packetIdPub2 = mqttClient.publish(var2, 1, true, open_flag.c_str());
-        break;
-      }
+
+//Функция отправки данных в гугл таблицу
+void write_to_google_sheet(String params) {
+   HTTPClient http;
+   String url="https://script.google.com/macros/s/"+GOOGLE_SCRIPT_ID+"/exec?"+params;
+   //Serial.print(url);
+    Serial.println("Posting data to Google Sheet");
+    //---------------------------------------------------------------------
+    //starts posting data to google sheet
+    http.begin(url.c_str());
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    int httpCode = http.GET();
+    Serial.print("HTTP Status Code: ");
+    Serial.println(httpCode);
+    //---------------------------------------------------------------------
+    //getting response from google sheet
+    String payload;
+    if (httpCode > 0) {
+        //payload = http.getString();
+        Serial.println("Payload: ");//+payload);
     }
-    // кнопка нажалась - покидаем цикл
-    //сообщаем об отсутствии ошибки
-    error_flag = "0";
-    String var = "ESP32Counter/Zerror";
-    char var1[20];
-    var.toCharArray(var1,20);
-    uint16_t packetIdPub = mqttClient.publish(var1, 1, true, error_flag.c_str());
-
-  }
-  open_flag_byte = 2;
+    //---------------------------------------------------------------------
+    http.end();
 }
 
-//Функция открытия заслонки
-void vent_open(){
-  // MQTT сообщение  - заслонка открыта.
-  open_flag = "1";
-  String var = "ESP32Counter/Zopen";
-  char var1[19];
-  var.toCharArray(var1,19);
-  uint16_t packetIdPub = mqttClient.publish(var1, 1, true, open_flag.c_str());
-  open_flag_byte = 2;
-  // target = valve_angle*2,5; на будущее, если что-то открывать на угол
-  stepper.setTarget(500);
-  stepper.setMaxSpeed(100);
-  while (!stepper.ready()) {  // пока кнопка не нажата
-  stepper.tick();               // крутим
-}
-if(stepper.ready()){
-  stepper.disable();
-  }
-}
 
 void send_mqtt(String value, String addr, int leght){
   char var1[leght];
@@ -638,107 +730,18 @@ void odo(){
   param += "&box85="+odometr_data;
   write_to_google_sheet(param);
 }
-//Функция отправки данных в гугл таблицу
-void write_to_google_sheet(String params) {
-   HTTPClient http;
-   String url="https://script.google.com/macros/s/"+GOOGLE_SCRIPT_ID+"/exec?"+params;
-   //Serial.print(url);
-    Serial.println("Posting data to Google Sheet");
-    //---------------------------------------------------------------------
-    //starts posting data to google sheet
-    http.begin(url.c_str());
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    int httpCode = http.GET();
-    Serial.print("HTTP Status Code: ");
-    Serial.println(httpCode);
-    //---------------------------------------------------------------------
-    //getting response from google sheet
-    String payload;
-    if (httpCode > 0) {
-        //payload = http.getString();
-        Serial.println("Payload: ");//+payload);
-    }
-    //---------------------------------------------------------------------
-    http.end();
-}
-
-void Read_18b20(byte addr[8], int t){
-  //переменные для датчиков температуры
-  byte i;
-  byte present = 0;
-  byte type_s;
-  byte data[12];
-  float celsius, fahrenheit;
-  String result;
 
 
-  ds.reset();
-  ds.select(addr);
-  ds.write(0x44, 0);        // признак выбора режима питания 0-внешнее 1-паразитное
-  //delay(1000);
-  if ((millis() - read_18b20) >= period_18b20_read) {
-
-  read_18b20 = millis(); // обнуляем таймер на полсекунды - обработка датчиком
-
-
-  present = ds.reset();
-  ds.select(addr);
-  ds.write(0xBE);         // читаем результат
-
-  for ( i = 0; i < 9; i++) {           // нам требуется 9 байтов
-    data[i] = ds.read();
-  }
-
-  int16_t raw = (data[1] << 8) | data[0];
-  if (type_s) {
-    raw = raw << 3; // 9 bit resolution default
-    if (data[7] == 0x10) {
-      // "count remain" gives full 12 bit resolution
-      raw = (raw & 0xFFF0) + 12 - data[6];
-    }
-  } else {
-    byte cfg = (data[4] & 0x60);
-    // at lower res, the low bits are undefined, so let's zero them
-    if (cfg == 0x00) raw = raw & ~7;  // 9 bit resolution, 93.75 ms
-    else if (cfg == 0x20) raw = raw & ~3; // 10 bit res, 187.5 ms
-    else if (cfg == 0x40) raw = raw & ~1; // 11 bit res, 375 ms
-    //// default is 12 bit resolution, 750 ms conversion time
-  }
-  celsius = (float)raw / 16.0;
-  fahrenheit = celsius * 1.8 + 32.0;
-  //  if (flag == 1) {
-  result = String(celsius);
-//} else{
-  //result = "**.**";
-//}
-
-if (t == 15){
-  uint16_t packetIdPub2 = mqttClient.publish("Counter/oil_temp", 1, true, result.c_str());
-  Serial.print("температура:");
-  Serial.println(result.c_str());
-}
-  return;
-}
-}
 
 void loop() {
 
-  // Читаем датчик 18b20 + обновляем заслонку
-if ((millis() - T18b20_1) >= period_18b20_1) {
-    Read_18b20(sensor_oil, 15);
-    T18b20_1 = millis(); // обнуляем таймер опроса датчика
-    if (digitalRead(LIMSW_X && open_flag_byte == 0)){//если концевик не нажат, а из HA пришла команда закрыть
-      homing();
-    }
-    send_mqtt(open_flag, "ESP32Counter/Zopen", 19); //отправляем регулярно состояние заслонки
-
-    //раз в 6с отпр топик состояния заслонки.
-          }
-
+/* пока закомментируем, т.к. отрабатываем меню
 // Снятие данных счетчика раз в сутки
 if ((millis() - p_counter) >= period_counter) {
   p_counter = millis();
   odo();
+  voltage();
+  current();
 }
 
 // снятие данных напряжения и тока по таймеру
@@ -749,121 +752,15 @@ if ((millis() - voltageP) >= period_voltage) {
   current();
 }
 
-if ((millis() - dht22_power) >= (period_DHT22_power)) {
-  digitalWrite(DHTRELAYPIN,LOW);
-  // подаем питание на датчики, сброс происходит в обработке датчиков
-}
-// Снятие данных по таймеру с датчика влажности
-if ((millis() - dht22) >= period_DHT22) {
+*/
 
-  dht22 = millis();
-
-// обработка датчика 1
-  float h = dht.readHumidity(); // считывание данных о температуре и влажности датчика1
-  delay(70);
-  float t = dht.readTemperature();// считываем температуру в градусах Цельсия с датчика1
-  delay(70);
-
-  // проверяем, корректно ли прочитались данные,
-  // и если нет, то выходим и пробуем снова:
-  if (isnan(h) || isnan(t)) {
-    Serial.print("Failed to read from DHT1 sensor!"); // "Не удалось прочитать данные с датчика DHT!"
-    } else {
-    String hum = String(h);
-    String temp = String(t);
-    Serial.print("Temp: "+ temp + " Hum: " + hum);
-    String var = "ESP32Counter/Temp";
-    char var1[18];
-    var.toCharArray(var1,18);
-    uint16_t packetIdPub = mqttClient.publish(var1, 1, true, temp.c_str());
-    Serial.print("температура DHT22:");
-    Serial.println(temp.c_str());
-    var = "ESP32Counter/Hum";
-    char var2[17];
-    var.toCharArray(var2,17);
-    packetIdPub = mqttClient.publish(var2, 1, true, hum.c_str());
-    Serial.print("влажность DHT22:");
-    Serial.println(+hum.c_str());
+if (Serial.available()) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();                 // убираем пробелы и символы перевода строки
+    handleCommand(input);
   }
-// конец обработки датчика 1
 
-// обработка датчика 2
-    h = dht2.readHumidity(); // считывание данных о температуре и влажности датчика2
-    delay(70);
-    t = dht2.readTemperature();// считываем температуру в градусах Цельсия с датчика2
-    delay(70);
 
-// проверяем, корректно ли прочитались данные,
-// и если нет, то выходим и пробуем снова:
-if (isnan(h) || isnan(t)) {
-  Serial.print("Failed to read from DHT2 sensor!"); // "Не удалось прочитать данные с датчика DHT!"
-  } else {
-  String hum = String(h);
-  String temp = String(t);
-  Serial.print("Temp2: "+ temp + " Hum2: " + hum);
-  String var = "ESP32Counter/Temp2";
-  Serial.println(var);
-  char var1[19];
-  var.toCharArray(var1,19);
-  uint16_t packetIdPub = mqttClient.publish(var1, 1, true, temp.c_str());
-  Serial.print("температура DHT22 №2:");
-  Serial.println(temp.c_str());
-  var = "ESP32Counter/Hum2";
-  Serial.println(var);
-  char var2[18];
-  var.toCharArray(var2,18);
-  packetIdPub = mqttClient.publish(var2, 1, true, hum.c_str());
-  Serial.print("влажность DHT22 №2:");
-  Serial.println(hum.c_str());
-  }
-// конец обработки датчика 2
-  digitalWrite(DHTRELAYPIN,HIGH); // снимаем питание с датчиков
-  dht22_power = millis(); // сбрасываем таймер подачи питания на датчик
-}
-// проверка флага опроса счетчика
-if (flag == 1){
-  odo();
-  voltage();
-  current();
-  flag = 0;
-  }
-// проверка флага состояния включения вентилятора
-if (relay_flag ==1){
-  digitalWrite(RELAY,HIGH); //если флаг 1 реле выключить
-  went_flag = "1";
-  String var = "ESP32Counter/went1";
-  char var2[19];
-  var.toCharArray(var2,19);
-  uint16_t packetIdPub = mqttClient.publish(var2, 1, true, went_flag.c_str());
-}
-if (relay_flag ==0){
-  // если пришло сообщ вкл вентилятор, проверяем открыта ли заслонка и не в ошибке ли она висит
-  if(open_flag=="1" & error_flag=="0"){
-  digitalWrite(RELAY,LOW); // если флаг 0 реле включить
-  went_flag = "0";
-  // сообщаем, что заслонка закрылась
-  String var = "ESP32Counter/went1";
-  char var2[19];
-  var.toCharArray(var2,19);
-  uint16_t packetIdPub = mqttClient.publish(var2, 1, true, went_flag.c_str());
-  Serial.println("Went start");
-} else{
-  digitalWrite(RELAY,HIGH); // если флаг 0 реле включить
-  went_flag = "1";
-  // сообщаем, что заслонка закрылась
-  String var = "ESP32Counter/went1";
-  char var2[19];
-  var.toCharArray(var2,19);
-  uint16_t packetIdPub = mqttClient.publish(var2, 1, true, went_flag.c_str());
-  Serial.println("Went stop - error");
-}
-}
-if (open_flag_byte == 1){
-  vent_open();
-}
-if (open_flag_byte == 0){
-  homing();
-}
 }
 /*
 String getSerialNumber(int netAdr)
@@ -1036,72 +933,6 @@ String getARPower(int netAdr)
   else   return String("Error");
 }*/
 //////////////////////////////////////////////////////////////////////////////////
-void send(byte *cmd, int s, byte *response) {
- // Serial.print("sending...");
-  unsigned int crc = crc16MODBUS(cmd, s);
-  unsigned int crc1 = crc & 0xFF;
-  unsigned int crc2 = (crc>>8) & 0xFF;
-  delay(10);
-  digitalWrite(SerialControl, RS485Transmit);  // Init Transceiver
-       for(int i=0; i<s; i++)
-       {
-              RS485Serial.write(cmd[i]);
-       }
-  RS485Serial.write(crc1);
-  RS485Serial.write(crc2);
-  byte i = 0;
-  digitalWrite(SerialControl, RS485Receive);  // Init Transceiver
-  delay(200);
-         if (RS485Serial.available())
-           {
-             while (RS485Serial.available())
-               {
-                byteReceived= RS485Serial.read();    // Read received byte
-                delay(10);
-                response[i++] = byteReceived;
-                }
-           }
-  delay(20);
-}
 
-unsigned int crc16MODBUS(byte *s, int count) {
-  unsigned int crcTable[] = {
-        0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
-        0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
-        0xCC01, 0x0CC0, 0x0D80, 0xCD41, 0x0F00, 0xCFC1, 0xCE81, 0x0E40,
-        0x0A00, 0xCAC1, 0xCB81, 0x0B40, 0xC901, 0x09C0, 0x0880, 0xC841,
-        0xD801, 0x18C0, 0x1980, 0xD941, 0x1B00, 0xDBC1, 0xDA81, 0x1A40,
-        0x1E00, 0xDEC1, 0xDF81, 0x1F40, 0xDD01, 0x1DC0, 0x1C80, 0xDC41,
-        0x1400, 0xD4C1, 0xD581, 0x1540, 0xD701, 0x17C0, 0x1680, 0xD641,
-        0xD201, 0x12C0, 0x1380, 0xD341, 0x1100, 0xD1C1, 0xD081, 0x1040,
-        0xF001, 0x30C0, 0x3180, 0xF141, 0x3300, 0xF3C1, 0xF281, 0x3240,
-        0x3600, 0xF6C1, 0xF781, 0x3740, 0xF501, 0x35C0, 0x3480, 0xF441,
-        0x3C00, 0xFCC1, 0xFD81, 0x3D40, 0xFF01, 0x3FC0, 0x3E80, 0xFE41,
-        0xFA01, 0x3AC0, 0x3B80, 0xFB41, 0x3900, 0xF9C1, 0xF881, 0x3840,
-        0x2800, 0xE8C1, 0xE981, 0x2940, 0xEB01, 0x2BC0, 0x2A80, 0xEA41,
-        0xEE01, 0x2EC0, 0x2F80, 0xEF41, 0x2D00, 0xEDC1, 0xEC81, 0x2C40,
-        0xE401, 0x24C0, 0x2580, 0xE541, 0x2700, 0xE7C1, 0xE681, 0x2640,
-        0x2200, 0xE2C1, 0xE381, 0x2340, 0xE101, 0x21C0, 0x2080, 0xE041,
-        0xA001, 0x60C0, 0x6180, 0xA141, 0x6300, 0xA3C1, 0xA281, 0x6240,
-        0x6600, 0xA6C1, 0xA781, 0x6740, 0xA501, 0x65C0, 0x6480, 0xA441,
-        0x6C00, 0xACC1, 0xAD81, 0x6D40, 0xAF01, 0x6FC0, 0x6E80, 0xAE41,
-        0xAA01, 0x6AC0, 0x6B80, 0xAB41, 0x6900, 0xA9C1, 0xA881, 0x6840,
-        0x7800, 0xB8C1, 0xB981, 0x7940, 0xBB01, 0x7BC0, 0x7A80, 0xBA41,
-        0xBE01, 0x7EC0, 0x7F80, 0xBF41, 0x7D00, 0xBDC1, 0xBC81, 0x7C40,
-        0xB401, 0x74C0, 0x7580, 0xB541, 0x7700, 0xB7C1, 0xB681, 0x7640,
-        0x7200, 0xB2C1, 0xB381, 0x7340, 0xB101, 0x71C0, 0x7080, 0xB041,
-        0x5000, 0x90C1, 0x9181, 0x5140, 0x9301, 0x53C0, 0x5280, 0x9241,
-        0x9601, 0x56C0, 0x5780, 0x9741, 0x5500, 0x95C1, 0x9481, 0x5440,
-        0x9C01, 0x5CC0, 0x5D80, 0x9D41, 0x5F00, 0x9FC1, 0x9E81, 0x5E40,
-        0x5A00, 0x9AC1, 0x9B81, 0x5B40, 0x9901, 0x59C0, 0x5880, 0x9841,
-        0x8801, 0x48C0, 0x4980, 0x8941, 0x4B00, 0x8BC1, 0x8A81, 0x4A40,
-        0x4E00, 0x8EC1, 0x8F81, 0x4F40, 0x8D01, 0x4DC0, 0x4C80, 0x8C41,
-        0x4400, 0x84C1, 0x8581, 0x4540, 0x8701, 0x47C0, 0x4680, 0x8641,
-        0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
-    };
-    unsigned int crc = 0xFFFF;
-    for(int i = 0; i < count; i++) {
-        crc = ((crc >> 8) ^ crcTable[(crc ^ s[i]) & 0xFF]);
-    }
-    return crc;
-}
+
+
