@@ -1,4 +1,5 @@
 #include <Arduino.h>
+
 //#include <SoftwareSerial.h> //библиотека для работы с RS485
 #include <ETH.h>
 #include <WiFi.h>
@@ -128,6 +129,101 @@ const char* ssid = "4G-UFI-3a43";
 const char* password = "1234567890";
 String GOOGLE_SCRIPT_ID = "AKfycbxwurwRRddUcZicLEqtov0QGkh9jDIjnCa8uorSOR40XKirSNvfyvXQqiIgGy0tZUTZ"; //ID Google таблички
 IPAddress ip;
+//Создаем структуру для хранения связной информации гараж-счетчик-одометр
+struct GarageData {
+  uint16_t garageNumber;      // трёхзначный номер гаража (0–999)
+  uint32_t meterNumber;       // номер счётчика 
+  float    odometerReading;   // показание (кВт·ч)
+  bool     isValid;           // флаг: удалось ли успешно опросить счётчик
+};
+
+//Заполняем массив струтур
+GarageData garages[] = {
+  {404, 40, 5100.0f, true},
+  {406, 36, 18.41f, true},
+  {407, 69, 2058.2f, true},
+  // … ещё 67 записей
+};
+// определяем размер массива
+const int GARAGES_COUNT = sizeof(garages) / sizeof(garages[0]); // определяем размер массива
+// функция вывода в формате CVS
+void printGarageListCSV() {
+  Serial.println("garage,meter,reading,status");
+  for (int i = 0; i < GARAGES_COUNT; i++) {
+    char buf[16];
+    dtostrf(garages[i].odometerReading, 8, 2, buf);
+    Serial.print(garages[i].garageNumber);
+    Serial.print(',');
+    Serial.print(garages[i].meterNumber);
+    Serial.print(',');
+    Serial.print(buf);
+    Serial.print(',');
+    Serial.println(garages[i].isValid ? "OK" : "NO_DATA");
+  }
+}
+
+
+// функция  вывода в удобоваримом формате
+void printGarageList() {
+  // Заголовок таблицы
+  Serial.println("Garage | Meter      | Reading   | Status");
+  Serial.println("-------|------------|-----------|---------");
+
+  for (int i = 0; i < GARAGES_COUNT; i++) {
+    Serial.print(garages[i].garageNumber);
+    Serial.print("      | ");
+    Serial.print(garages[i].meterNumber);
+    Serial.print(" | ");
+
+    // Форматируем показание до 2 знаков после запятой
+    char buffer[16];
+    dtostrf(garages[i].odometerReading, 8, 2, buffer);
+    Serial.print(buffer);
+    Serial.print(" | ");
+
+    if (garages[i].isValid) {
+      Serial.println("OK");
+    } else {
+      Serial.println("NO DATA");
+    }
+  }
+}
+//обработка команд терминала
+void handleCommand(const String& cmdRaw) {
+  String cmd = cmdRaw;
+  cmd.trim();
+
+  if (cmd == "spisok") {
+    printGarageList();
+    return;
+  }
+
+  if (cmd.startsWith("find ")) {
+    String numStr = cmd.substring(5);
+    uint16_t target = numStr.toInt();
+    bool found = false;
+
+    for (int i = 0; i < GARAGES_COUNT; i++) {
+      if (garages[i].garageNumber == target) {
+        Serial.print("Гараж: "); Serial.print(garages[i].garageNumber);
+        Serial.print(", счётчик: "); Serial.print(garages[i].meterNumber);
+        Serial.print(", показание: ");
+        char buf[16];
+        dtostrf(garages[i].odometerReading, 8, 2, buf);
+        Serial.println(buf);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      Serial.println("Гараж не найден.");
+    }
+    return;
+  }
+
+  Serial.println("Неизвестная команда. Доступные: spisok, find <номер>, help");
+}
+
 
 /*!
  \brief функция подключения к сети wifi
@@ -279,23 +375,23 @@ pinMode(SerialControl, OUTPUT);
 digitalWrite(SerialControl, RS485Receive);// По умолчанию — приём
 //delay(300);
 
-//настройка сети
-mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
-wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
-connectToWifi();
-WiFi.onEvent(WiFiEvent);
+//настройка сети mqtt и wifi пока не используем
+//mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
+//wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
+//connectToWifi();
+//WiFi.onEvent(WiFiEvent);
 
-mqttClient.onConnect(onMqttConnect);
-mqttClient.onDisconnect(onMqttDisconnect);
-mqttClient.onSubscribe(onMqttSubscribe);
-mqttClient.onUnsubscribe(onMqttUnsubscribe);
-mqttClient.onMessage(onMqttMessage);
-//mqttClient.onPublish(onMqttPublish);
-mqttClient.setServer(MQTT_HOST, MQTT_PORT);
-mqttClient.setCredentials(MQTT_USERNAME, MQTT_PASSWORD);
+//mqttClient.onConnect(onMqttConnect);
+//mqttClient.onDisconnect(onMqttDisconnect);
+//mqttClient.onSubscribe(onMqttSubscribe);
+//mqttClient.onUnsubscribe(onMqttUnsubscribe);
+//mqttClient.onMessage(onMqttMessage);
+//mqttClient.onPublish(onMqttPublish); и так был в комментарии
+//mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+//mqttClient.setCredentials(MQTT_USERNAME, MQTT_PASSWORD);
 
-Serial.println(" ");
-Serial.println("Start_v02.01\r\n");
+while (!Serial) {}
+  Serial.println("Система готова. Введите 'spisok' для вывода списка гаражей.");
 
 
 }
@@ -639,7 +735,7 @@ void odo(){
 
 void loop() {
 
-
+/* пока закомментируем, т.к. отрабатываем меню
 // Снятие данных счетчика раз в сутки
 if ((millis() - p_counter) >= period_counter) {
   p_counter = millis();
@@ -656,9 +752,13 @@ if ((millis() - voltageP) >= period_voltage) {
   current();
 }
 
+*/
 
-
-
+if (Serial.available()) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();                 // убираем пробелы и символы перевода строки
+    handleCommand(input);
+  }
 
 
 }
