@@ -53,7 +53,6 @@ byte response[19];
 int byteReceived;
 int byteSend;
 int netAdr;
-int valve_angle; //значение угла открытия вентиляционной заслонки 0-100%
 //Массив для данных с терминала
 char incomingBytes[15];
 
