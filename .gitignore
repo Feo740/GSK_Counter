@@ -1,0 +1,20 @@
+# PlatformIO
+.pio/
+.piolibdeps/
+*.elf
+*.map
+*.bin
+
+# IDE
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+
