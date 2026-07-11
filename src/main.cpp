@@ -1,7 +1,9 @@
 #include <Arduino.h>
-
+#include <Wire.h>
+#include <SPI.h>
+#include <RTClib.h> // библиотека для часов реального времени
 //#include <SoftwareSerial.h> //библиотека для работы с RS485
-#include <ETH.h>
+//#include <ETH.h>
 #include <WiFi.h>
 #include <HTTPClient.h> // для работы с гугл таблицами
 #include <AsyncMqttClient.h>
@@ -15,7 +17,7 @@ extern "C" {
 //-------- инициализация
 //SoftwareSerial RS485Serial(SSerialRx, SSerialTx); // Rx, Tx
 //// линия управления передачи приема
-#define SerialControl 18  // RS485 Direction control 5 or 18
+#define SerialControl 16  // RS485 Direction control 5 or 18
 /////// флаг приема передачи
 #define RS485Transmit    HIGH
 #define RS485Receive     LOW
@@ -26,7 +28,7 @@ extern "C" {
 #define MQTT_USERNAME "feo"
 #define MQTT_PASSWORD "ferrari220"
 // концевик заслонки вентиляции
-#define LIMSW_X 16
+//#define LIMSW_X 16
 //-------- Инициализация аппаратного UART (UART1)
 HardwareSerial RS485Serial(1);  // Используем UART1
 
@@ -121,14 +123,20 @@ unsigned long read_18b20 = 0; ///< Техническая переменная �
 unsigned long voltageP = 0; ///< Техническая переменная счетчика таймера для снятия напр и тока
 
 // логин и пароль сети WiFi
-//const char* ssid = "MikroTik-1EA2D2";
-//const char* password = "ferrari220";
+const char* ssid = "MikroTik-1EA2D2";
+const char* password = "ferrari220";
 //const char* ssid = "US_WIFI";
 //const char* password = "beeline2022";
-const char* ssid = "4G-UFI-3a43";
-const char* password = "1234567890";
+//const char* ssid = "4G-UFI-3a43";
+//const char* password = "1234567890";
 String GOOGLE_SCRIPT_ID = "AKfycbxwurwRRddUcZicLEqtov0QGkh9jDIjnCa8uorSOR40XKirSNvfyvXQqiIgGy0tZUTZ"; //ID Google таблички
+//String GOOGLE_SCRIPT_ID = "1Flzse1pfy-nzjjS-P8k3HPZ7YkLm4w85BFGZREPJXeo"; //ID Google таблички
 IPAddress ip;
+
+RTC_DS3231 rtc; // объект для часов реального времени
+
+String inputBuffer = "";      // буфер для накопления строки
+bool newCommand = false;     // флаг: пришла ли полная команда
 //Создаем структуру для хранения связной информации гараж-счетчик-одометр
 struct GarageData {
   uint16_t garageNumber;      // трёхзначный номер гаража (0–999)
@@ -136,6 +144,8 @@ struct GarageData {
   float    odometerReading;   // показание (кВт·ч)
   bool     isValid;           // флаг: удалось ли успешно опросить счётчик
 };
+
+
 
 //Заполняем массив струтур
 GarageData garages[] = {
@@ -147,6 +157,22 @@ GarageData garages[] = {
 // определяем размер массива
 const int GARAGES_COUNT = sizeof(garages) / sizeof(garages[0]); // определяем размер массива
 // функция вывода в формате CVS
+
+//функция получения из структуры данных одо по номеру гаража
+float getOdometerForGarage(uint16_t targetNumber) {
+  for (int i = 0; i < GARAGES_COUNT; i++) {
+    if (garages[i].garageNumber == targetNumber) {
+      return garages[i].odometerReading;
+    }
+  }
+  // Если гараж не найден — вернём -1 как признак ошибки
+  return -1.0f;
+}
+
+//прототип
+void write_to_google_sheet(String params);
+
+
 void printGarageListCSV() {
   Serial.println("garage,meter,reading,status");
   for (int i = 0; i < GARAGES_COUNT; i++) {
@@ -161,7 +187,14 @@ void printGarageListCSV() {
     Serial.println(garages[i].isValid ? "OK" : "NO_DATA");
   }
 }
-
+//функция вывода даты и времени
+void printDateTime(const DateTime& dt) {
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%04u/%02u/%02u %02u:%02u:%02u",
+           dt.year(), dt.month(), dt.day(),
+           dt.hour(), dt.minute(), dt.second());
+  Serial.println(buf);
+}
 
 // функция  вывода в удобоваримом формате
 void printGarageList() {
@@ -193,6 +226,44 @@ void handleCommand(const String& cmdRaw) {
   String cmd = cmdRaw;
   cmd.trim();
 
+  if (cmd.startsWith("settime ")) {
+    // Ожидаем формат: settime 2024 10 25 14 30 00
+    String args = cmd.substring(8);
+    int y, m, d, h, mi, s;
+    char buf[64];
+    args.toCharArray(buf, sizeof(buf));
+
+    if (sscanf(buf, "%d %d %d %d %d %d", &y, &m, &d, &h, &mi, &s) == 6) {
+      DateTime newTime(y, m, d, h, mi, s);
+      rtc.adjust(newTime);
+      Serial.print(F("Время установлено: "));
+      printDateTime(newTime);
+    } else {
+      Serial.println(F("Неверный формат. Используйте: settime YYYY MM DD HH MM SS"));
+    }
+    return;
+  }
+
+  if (cmd == "time") {
+     DateTime now = rtc.now();
+    Serial.print(F("Текущее время: "));
+    Serial.println(now.timestamp());
+  }
+  if (cmd == "pull") {
+    //получаем данные пробега для гаража 404
+   float reading = getOdometerForGarage(404);  
+   String inputBuffer = "";      // буфер для накопления строки
+   char buffer[16];
+   dtostrf(reading, 0, 2, buffer);  // 0 = автоширина, 2 знака после запятой
+   String s(buffer);    
+   Serial.print(F("отправляем данные в гугл "));
+   Serial.print(s);
+   s  = "box40="+s; 
+   write_to_google_sheet(s);
+  } 
+
+
+
   if (cmd == "spisok") {
     printGarageList();
     return;
@@ -221,7 +292,7 @@ void handleCommand(const String& cmdRaw) {
     return;
   }
 
-  Serial.println("Неизвестная команда. Доступные: spisok, find <номер>, help");
+  Serial.println("Доступные: spisok, find <номер>, time, settime YYYY MM DD HH MM SS");
 }
 
 
@@ -288,7 +359,7 @@ void WiFiEvent(WiFiEvent_t event) {
       Serial.println("WiFi connected");  //  "Подключились к WiFi"
       Serial.println("IP address: ");  //  "IP-адрес: "
       Serial.println(WiFi.localIP());
-      connectToMqtt();
+      //connectToMqtt();  // FIX: ВКЛЮЧИТЬ КОГДА БУДЕМ РАБОТАТЬ С mqtt
       break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
       Serial.println("WiFi lost connection");
@@ -377,9 +448,9 @@ digitalWrite(SerialControl, RS485Receive);// По умолчанию — при�
 
 //настройка сети mqtt и wifi пока не используем
 //mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
-//wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
-//connectToWifi();
-//WiFi.onEvent(WiFiEvent);
+wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
+connectToWifi();
+WiFi.onEvent(WiFiEvent);
 
 //mqttClient.onConnect(onMqttConnect);
 //mqttClient.onDisconnect(onMqttDisconnect);
@@ -391,8 +462,22 @@ digitalWrite(SerialControl, RS485Receive);// По умолчанию — при�
 //mqttClient.setCredentials(MQTT_USERNAME, MQTT_PASSWORD);
 
 while (!Serial) {}
-  Serial.println("Система готова. Введите 'spisok' для вывода списка гаражей.");
+  Serial.println("Система готова.");
+ 
+  Wire.begin();
 
+  if (!rtc.begin()) {
+    Serial.println(F("Ошибка: модуль DS3231 не найден. Проверь I2C."));
+    while (1) delay(10);
+  }
+
+  // Если питание пропадало — ставим время компиляции
+  if (rtc.lostPower()) {
+    Serial.println(F("RTC потерял питание. Устанавливаем время по компиляции..."));
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
+  printDateTime(rtc.now());
 
 }
 
@@ -755,13 +840,29 @@ if ((millis() - voltageP) >= period_voltage) {
 */
 
 if (Serial.available()) {
-    String input = Serial.readStringUntil('\n');
-    input.trim();                 // убираем пробелы и символы перевода строки
-    handleCommand(input);
+    char c = Serial.read();
+
+    // ЭХО: отправляем символ обратно, чтобы видеть ввод
+    Serial.write(c);
+
+    if (c == '\n' || c == '\r') {
+      newCommand = true;
+      inputBuffer.trim();
+    } else {
+      inputBuffer += c;
+    }
+  }
+
+  if (newCommand && !inputBuffer.isEmpty()) {
+    handleCommand(inputBuffer);
+    inputBuffer = "";
+    newCommand = false;
+    Serial.print("\nВведите команду: ");
+  }
   }
 
 
-}
+
 /*
 String getSerialNumber(int netAdr)
 {
