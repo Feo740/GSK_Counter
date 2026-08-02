@@ -92,6 +92,9 @@ int netAdr;
 //Массив для данных с терминала
 char incomingBytes[15];
 
+// глобальная переменная для хранения результата пробега из счетчика.
+float r1;
+
 String odometr_data; //строка пробега считанного со счетчика функцией GetOdo
 String voltage_data; // строка значения напряжения считанного функцией GetVoltage по фазе
 String current_data; // строка значения тока считанного функцией GetCurrent по фазе
@@ -121,7 +124,7 @@ const char* password = "ferrari220";
 //const char* password = "beeline2022";
 //const char* ssid = "4G-UFI-3a43";
 //const char* password = "1234567890";
-String GOOGLE_SCRIPT_ID = "AKfycbxwurwRRddUcZicLEqtov0QGkh9jDIjnCa8uorSOR40XKirSNvfyvXQqiIgGy0tZUTZ"; //ID Google таблички
+String GOOGLE_SCRIPT_ID = "AKfycbwHpzQ8bA0wraHN7WdZJJ7oMgI4xG_gV070WzbCrgiyIDQEgr1O2D42vUslEp1gkkKL"; //ID Google таблички
 //String GOOGLE_SCRIPT_ID = "1Flzse1pfy-nzjjS-P8k3HPZ7YkLm4w85BFGZREPJXeo"; //ID Google таблички
 IPAddress ip;
 
@@ -137,60 +140,124 @@ struct GarageData {
   bool     isValid;           // флаг: удалось ли успешно опросить счётчик
 };
 
+// Таблица соответствия: номер бокса -> буква столбца в Google Sheets
+struct BoxMapping {
+  uint16_t boxNumber;
+  const char* column;
+};
 
+const BoxMapping boxMap[] = {
+  {70, "B"},
+  //{85, "C"},
+  {43, "D"},
+  {138, "E"},
+  {64, "F"},
+  {17, "G"},
+  {14, "H"},
+  {183, "I"},
+  {83, "J"},
+  {15, "K"},
+  {18, "L"},
+  {94, "M"},
+  {67, "N"},
+  {182, "O"},
+  {23, "P"},
+  {24, "Q"},
+  {74, "R"},
+  {201, "S"},
+  {96, "T"},
+  {84, "U"},
+  {22, "V"},
+  {39, "W"},
+  {181, "X"},
+  {16, "Y"},
+  {89, "Z"},
+  {63, "AA"},
+  {85, "AB"},
+  {61, "AC"},
+  {68, "AD"},
+  {40, "AE"},
+  {36, "AF"},
+  {69, "AG"},
+  {77, "AH"},
+  {213, "AI"},
+  {158, "AJ"},
+  {55, "AK"},
+  {51, "AL"},
+  {2, "AM"},
+  {33, "AN"},
+  {52, "AO"},
+  {60, "AP"},
+  {205, "AQ"},
+  {78, "AR"},
+  {93, "AS"},
+  {86, "AT"},
+  {46, "AU"},
+  {169, "AV"},
+  {206, "AW"},
+  {0, nullptr} // маркер конца массива (ноль не может быть номером бокса)
+};
 
-//Заполняем массив струтур
+// Вот здесь объявляем boxMapCount
+const int boxMapCount = sizeof(boxMap) / sizeof(boxMap[0]);
+
+//Заполняем массив струтур тестовыми значениями
 GarageData garages[] = {
+  //тестовый счетчик
+  {2, 70, 0.0f, true},
+
   //головной счетчик 743
-  {1, 43, 0.0f, true},
+  {1, 43, 1.0f, true},
 
   // первый бокс
-  {100, 138, 0.0f, true},
-  {102, 64, 0.0f, true},
-  {103, 17, 0.0f, true},
-  {107, 14, 0.0f, true},
-  {108, 183, 0.0f, true},
-  {109, 83, 0.0f, true},
-  {110, 15, 0.0f, true},
-  {111, 18, 0.0f, true},
-  {113, 94, 0.0f, true},
+  {100, 138, 2.0f, true},
+  {102, 64, 3.0f, true},
+  {103, 17, 4.0f, true},
+  {107, 14, 5.0f, true},
+  {108, 183, 6.0f, true},
+  {109, 83, 7.0f, true},
+  {110, 15, 8.0f, true},
+  {111, 18, 9.0f, true},
+  {113, 94, 10.0f, true},
   // второй бокс
-  {200, 67, 0.0f, true},
-  {201, 182, 0.0f, true},
-  {206, 23, 0.0f, true},
-  {207, 24, 0.0f, true},
-  {210, 74, 0.0f, true},
-  {213, 201, 0.0f, true},
-  {218, 96, 0.0f, true},
+  {200, 67, 11.0f, true},
+  {201, 182, 12.0f, true},
+  {206, 23, 13.0f, true},
+  {207, 24, 14.0f, true},
+  {210, 74, 15.0f, true},
+  {213, 201, 16.0f, true},
+  {218, 96, 17.0f, true},
   // третий бокс
-  {300, 84, 0.0f, true},
-  {307, 22, 0.0f, true},
-  {311, 39, 0.0f, true},
-  {312, 181, 0.0f, true},
-  {313, 16, 0.0f, true},
-  {314, 89, 0.0f, true},
-  {315, 63, 0.0f, true},
+  {300, 84, 18.0f, true},
+  {307, 22, 19.0f, true},
+  {311, 39, 20.0f, true},
+  {312, 181, 21.0f, true},
+  {313, 16, 22.0f, true},
+  {314, 89, 23.0f, true},
+  {315, 63, 24.0f, true},
   // четветый бокс
-  {400, 85, 0.0f, true},
-  {402, 61, 0.0f, true},
-  {403, 68, 0.0f, true},
-  {404, 40, 0.0f, true},
-  {406, 36, 0.0f, true},
-  {407, 69, 0.0f, true},
-  {408, 77, 0.0f, true},
-  {410, 213, 0.0f, true},
-  {411, 158, 0.0f, true},
-  {413, 55, 0.0f, true},
-  {414, 51, 0.0f, true},
-  {420, 2, 0.0f, true},
-  {421, 33, 0.0f, true},
-  {422, 52, 0.0f, true},
-  {425, 78, 0.0f, true},
-  {426, 93, 0.0f, true},
-  {427, 86, 0.0f, true},
-  {428, 46, 0.0f, true},
-  {429, 169, 0.0f, true},
-  {430, 206, 0.0f, true},
+  {400, 85, 25.0f, true},
+  {402, 61, 26.0f, true},
+  {403, 68, 27.0f, true},
+  {404, 40, 28.0f, true},
+  {406, 36, 29.0f, true},
+  {407, 69, 30.0f, true},
+  {408, 77, 31.0f, true},
+  {410, 213, 32.0f, true},
+  {411, 158, 33.0f, true},
+  {413, 55, 34.0f, true},
+  {414, 51, 35.0f, true},
+  {420, 2, 36.0f, true},
+  {421, 33, 37.0f, true},
+  {422, 52, 38.0f, true},
+  {423, 60, 39.0f, true},
+  {424, 205, 40.0f, true},
+  {425, 78, 41.0f, true},
+  {426, 93, 42.0f, true},
+  {427, 86, 43.0f, true},
+  {428, 46, 44.0f, true},
+  {429, 169, 45.0f, true},
+  {430, 206, 46.0f, true},
 };
 // определяем размер массива
 const int GARAGES_COUNT = sizeof(garages) / sizeof(garages[0]); // определяем размер массива
@@ -259,6 +326,149 @@ void printGarageList() {
     }
   }
 }
+
+void send(byte *cmd, int s, byte *response) {
+ // Serial.print("sending...");
+  unsigned int crc = crc16MODBUS(cmd, s);
+  unsigned int crc1 = crc & 0xFF;
+  unsigned int crc2 = (crc>>8) & 0xFF;
+  delay(10);
+  // Переключаем в режим передачи
+  digitalWrite(SerialControl, RS485Transmit);  // Init Transceiver
+  delay(1);  // Небольшая задержка для стабилизации
+       for(int i=0; i<s; i++)
+       {
+              RS485Serial.write(cmd[i]);
+       }
+  RS485Serial.write(crc1);
+  RS485Serial.write(crc2);
+  RS485Serial.flush();  // Ждём окончания передачи
+
+  // Переключаем в режим приёма
+  digitalWrite(SerialControl, RS485Receive);  // Init Transceiver
+  delay(2);// Даем время счётчику на ответ
+  int i = 0;
+  unsigned long timeout = millis() + 1000;  // Таймаут 1 сек
+  
+  while (millis() < timeout && i < 19) {
+    if (RS485Serial.available()) {
+      response[i++] = RS485Serial.read();
+      timeout = millis() + 100;  // Обновляем таймаут при получении байта
+    }
+  }
+
+  // Обнуляем остатки, если пришло меньше
+  while (i < 19) {
+    response[i++] = 0;
+  }
+
+}
+
+// Функция считывает пробег со счетчика, формирует MQTT сообщение с пробегом, текстовую переменную odometr_data для формирования строки гугл-табли
+void GetOdo(byte number){
+  testConnect[0] = number;
+  odometr[0] = number;
+  // Опрос счетчика 22
+  send(testConnect, sizeof(testConnect), response);
+  for (int i=0; i<19; i++){
+    Serial.print(response[i]);
+    Serial.print(", ");
+}
+  Serial.println("");
+  delay(1000);
+  send(odometr, sizeof(odometr), response);
+  for (int i=0; i<19; i++){
+    Serial.print(response[i]);
+    Serial.print(", ");
+}
+  Serial.println("");
+  long result_odo=0;
+  result_odo=response[2];
+  result_odo=result_odo<<8;
+  result_odo=result_odo+response[1];
+  result_odo=result_odo<<8;
+  result_odo=result_odo+response[4];
+  result_odo=result_odo<<8;
+  result_odo=result_odo+response[3];
+  float r = result_odo;
+  r1 = r/1000.0f;
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%.3f", r1);   // всегда будет точка, например "0.018"
+  odometr_data = String(buf);
+  Serial.println(odometr_data);
+  /*String var2 = "ESP32Counter/Counter"+String(number);
+  char var1[23];
+  var2.toCharArray(var1,23);
+  uint16_t packetIdPub = mqttClient.publish(var1, 1, true, odometr_data.c_str());
+  odometr_data.replace(".",",");
+  for (int i=0; i<19; i++){
+    response[i]=0;
+  }*/
+  
+}
+
+
+// на основе данных функции GetOdo, формирует полный пакет опроса счетчика
+void odo(int target) {
+  GetOdo(target);
+    /*String param = "box";
+  param += target;
+  param += "=";
+  param += odometr_data;
+
+  // ГАРАНТИРОВАННО заменяем запятую на точку в итоговой строке
+  param.replace(',', '.');
+
+  Serial.print("FINAL PARAM: ");
+  Serial.println(param);  
+  delay(500);
+   Serial.println(param);
+  write_to_google_sheet(param);
+  */
+}
+
+//функция передачи собранных данных в гугл табличку
+void writeAllGarages(GarageData* garages, size_t count) {
+  String queryString = "";
+
+  for (size_t i = 0; i < count; ++i) {
+    if (!garages[i].isValid) continue;
+
+    // Ищем соответствие по номеру бокса, чтобы получить букву столбца
+    for (int j = 0; j < boxMapCount; ++j) {
+      if (garages[i].meterNumber == boxMap[j].boxNumber) {
+        const char* col = boxMap[j].column; // например "D" или "AA"
+
+        char buf[20];
+        snprintf(buf, sizeof(buf), "%.3f", garages[i].odometerReading);
+
+        if (queryString.length() > 0) {
+          queryString += "&";
+        }
+        queryString += col;          // параметр = буква столбца (D, AA и т.д.)
+        queryString += "=";
+        queryString += buf;
+        break;
+      }
+    }
+  }
+
+  if (queryString.length() == 0) {
+    Serial.println("No valid data to send");
+    return;
+  }
+
+  Serial.print("Sending all in one request: ");
+  Serial.println(queryString);
+
+  //String baseUrl = "https://script.google.com/macros/s/AKfycbxwurwRRddUcZicLEqtov0QGkh9jDIjnCa8uorSOR40XKirSNvfyvXQqiIgGy0tZUTZ/exec?";
+  //String fullUrl = baseUrl + queryString;
+
+  //write_to_google_sheet(fullUrl);
+  write_to_google_sheet(queryString);
+}
+
+
 //обработка команд терминала
 void handleCommand(const String& cmdRaw) {
   String cmd = cmdRaw;
@@ -329,8 +539,53 @@ void handleCommand(const String& cmdRaw) {
     }
     return;
   }
+// функция записи в структуру
+    if (cmd.startsWith("read ")) {
+    String numStr = cmd.substring(5);
+    uint16_t target = numStr.toInt(); 
+    bool found = false;
 
-  Serial.println("Доступные: spisok, find <номер>, time, settime YYYY MM DD HH MM SS");
+    for (int i = 0; i < GARAGES_COUNT; i++) {
+      if (garages[i].garageNumber == target) {
+        uint32_t meterNumber_var;       // номер счётчика 
+        meterNumber_var=garages[i].meterNumber;
+        GetOdo(meterNumber_var);
+        garages[i].odometerReading=r1; 
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      Serial.println("Гараж не найден.");
+    }
+    return;
+  }
+
+  //функция записи всех значений в структуру
+if (cmd.startsWith("read all")) {
+ bool found = false; 
+for (int i = 0; i < GARAGES_COUNT; i++) {
+        uint32_t meterNumber_var;       // номер счётчика 
+        meterNumber_var=garages[i].meterNumber;
+        GetOdo(meterNumber_var);
+        garages[i].odometerReading=r1; 
+        found = true;
+        break;
+}
+if (!found) {
+      Serial.println("Гараж не найден.");
+    }
+    return;
+}
+
+if (cmd.startsWith("send all")) {
+
+    writeAllGarages(garages, GARAGES_COUNT);
+    return;
+
+}
+
+  Serial.println("Доступные: spisok, find <номер>, read <номер>, read all, send all, time, settime YYYY MM DD HH MM SS");
 }
 
 
@@ -347,42 +602,7 @@ IPAddress ip = WiFi.localIP();
 
 
 
-void send(byte *cmd, int s, byte *response) {
- // Serial.print("sending...");
-  unsigned int crc = crc16MODBUS(cmd, s);
-  unsigned int crc1 = crc & 0xFF;
-  unsigned int crc2 = (crc>>8) & 0xFF;
-  delay(10);
-  // Переключаем в режим передачи
-  digitalWrite(SerialControl, RS485Transmit);  // Init Transceiver
-  delay(1);  // Небольшая задержка для стабилизации
-       for(int i=0; i<s; i++)
-       {
-              RS485Serial.write(cmd[i]);
-       }
-  RS485Serial.write(crc1);
-  RS485Serial.write(crc2);
-  RS485Serial.flush();  // Ждём окончания передачи
 
-  // Переключаем в режим приёма
-  digitalWrite(SerialControl, RS485Receive);  // Init Transceiver
-  delay(2);// Даем время счётчику на ответ
-  int i = 0;
-  unsigned long timeout = millis() + 1000;  // Таймаут 1 сек
-  
-  while (millis() < timeout && i < 19) {
-    if (RS485Serial.available()) {
-      response[i++] = RS485Serial.read();
-      timeout = millis() + 100;  // Обновляем таймаут при получении байта
-    }
-  }
-
-  // Обнуляем остатки, если пришло меньше
-  while (i < 19) {
-    response[i++] = 0;
-  }
-
-}
 
 //Функция переподключения к Wifi и MQTT  при обрыве связи
 void WiFiEvent(WiFiEvent_t event) {
@@ -443,18 +663,18 @@ while (!Serial) {}
  
   Wire.begin();
 
-  if (!rtc.begin()) {
-    Serial.println(F("Ошибка: модуль DS3231 не найден. Проверь I2C."));
-    while (1) delay(10);
-  }
+ // if (!rtc.begin()) {
+  //  Serial.println(F("Ошибка: модуль DS3231 не найден. Проверь I2C."));
+   // while (1) delay(10);
+  //}
 
   // Если питание пропадало — ставим время компиляции
-  if (rtc.lostPower()) {
-    Serial.println(F("RTC потерял питание. Устанавливаем время по компиляции..."));
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  }
+ // if (rtc.lostPower()) {
+    //Serial.println(F("RTC потерял питание. Устанавливаем время по компиляции..."));
+   // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  //}
 
-  printDateTime(rtc.now());
+ // printDateTime(rtc.now());
 
 }
 
@@ -465,6 +685,7 @@ void write_to_google_sheet(String params) {
    String url="https://script.google.com/macros/s/"+GOOGLE_SCRIPT_ID+"/exec?"+params;
    //Serial.print(url);
     Serial.println("Posting data to Google Sheet");
+    Serial.println(url);
     //---------------------------------------------------------------------
     //starts posting data to google sheet
     http.begin(url.c_str());
@@ -736,56 +957,9 @@ void voltage(){
   //write_to_google_sheet(param);
 }
 
-// Функция считывает пробег со счетчика, формирует MQTT сообщение с пробегом, текстовую переменную odometr_data для формирования строки гугл-табли
-void GetOdo(byte number){
-  testConnect[0] = number;
-  odometr[0] = number;
-  // Опрос счетчика 22
-  send(testConnect, sizeof(testConnect), response);
-  for (int i=0; i<19; i++){
-    Serial.print(response[i]);
-    Serial.print(", ");
-}
-  Serial.println("");
-  delay(1000);
-  send(odometr, sizeof(odometr), response);
-  for (int i=0; i<19; i++){
-    Serial.print(response[i]);
-    Serial.print(", ");
-}
-  Serial.println("");
-  long result_odo=0;
-  result_odo=response[2];
-  result_odo=result_odo<<8;
-  result_odo=result_odo+response[1];
-  result_odo=result_odo<<8;
-  result_odo=result_odo+response[4];
-  result_odo=result_odo<<8;
-  result_odo=result_odo+response[3];
-  float r = result_odo;
-  float r1 = r/1000.0f;
-  Serial.println(r1,3);
-  odometr_data = String(r1);
-  String var2 = "ESP32Counter/Counter"+String(number);
-  char var1[23];
-  var2.toCharArray(var1,23);
-  uint16_t packetIdPub = mqttClient.publish(var1, 1, true, odometr_data.c_str());
-  odometr_data.replace(".",",");
-  for (int i=0; i<19; i++){
-    response[i]=0;
-  }
-}
 
-// на основе данных функции GetOdo, формирует полный пакет опроса счетчика
-void odo(){
-  GetOdo(40);
-  String param;
-  param  = "box40="+odometr_data;
-  delay(500);
-  GetOdo(85);
-  param += "&box85="+odometr_data;
-  write_to_google_sheet(param);
-}
+
+
 
 
 
