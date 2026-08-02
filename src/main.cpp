@@ -539,8 +539,9 @@ void handleCommand(const String& cmdRaw) {
     }
     return;
   }
-// функция записи в структуру
-    if (cmd.startsWith("read ")) {
+
+  // функция записи в структуру
+  if (cmd.startsWith("read ")) {
     String numStr = cmd.substring(5);
     uint16_t target = numStr.toInt(); 
     bool found = false;
@@ -562,27 +563,25 @@ void handleCommand(const String& cmdRaw) {
   }
 
   //функция записи всех значений в структуру
-if (cmd.startsWith("read all")) {
- bool found = false; 
-for (int i = 0; i < GARAGES_COUNT; i++) {
+  if (cmd.startsWith("read all")) {
+        bool found = false; 
+      for (int i = 0; i < GARAGES_COUNT; i++) {
         uint32_t meterNumber_var;       // номер счётчика 
         meterNumber_var=garages[i].meterNumber;
         GetOdo(meterNumber_var);
         garages[i].odometerReading=r1; 
         found = true;
         break;
-}
-if (!found) {
+      } 
+    if (!found) {
       Serial.println("Гараж не найден.");
     }
     return;
 }
 
 if (cmd.startsWith("send all")) {
-
     writeAllGarages(garages, GARAGES_COUNT);
     return;
-
 }
 
   Serial.println("Доступные: spisok, find <номер>, read <номер>, read all, send all, time, settime YYYY MM DD HH MM SS");
