@@ -8,6 +8,8 @@
 #include <WiFi.h>
 #include <HTTPClient.h> // для работы с гугл таблицами
 #include <AsyncMqttClient.h>
+#include <Preferences.h> // для работы c энергонезависимой памятью
+#include <cstdio>
 extern "C" {
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
@@ -200,6 +202,9 @@ const BoxMapping boxMap[] = {
 
 // Вот здесь объявляем boxMapCount
 const int boxMapCount = sizeof(boxMap) / sizeof(boxMap[0]);
+
+// Инициализация Preferences (один раз при старте) для памяти
+Preferences nvs;
 
 //Заполняем массив струтур тестовыми значениями
 GarageData garages[] = {
@@ -468,6 +473,73 @@ void writeAllGarages(GarageData* garages, size_t count) {
   write_to_google_sheet(queryString);
 }
 
+// --- Сохранение: пишем по garageNumber как ключу ---
+void saveGarageDataToNVS() {
+  Serial.println("Saving structure to NVS...");
+
+  char key[16];
+
+  for (int i = 0; i < GARAGES_COUNT; ++i) {
+    // Сохраняем только валидные гаражи (номер > 0)
+    if (garages[i].garageNumber == 0) continue;
+
+    // Ключ вида "g2_num", "g100_meter" и т.д.
+    snprintf(key, sizeof(key), "g%u_num", garages[i].garageNumber);
+    nvs.putUInt(key, garages[i].garageNumber);
+
+    snprintf(key, sizeof(key), "g%u_meter", garages[i].garageNumber);
+    nvs.putULong(key, garages[i].meterNumber);
+
+    snprintf(key, sizeof(key), "g%u_read", garages[i].garageNumber);
+    nvs.putFloat(key, garages[i].odometerReading);
+
+    snprintf(key, sizeof(key), "g%u_valid", garages[i].garageNumber);
+    nvs.putBool(key, garages[i].isValid);
+  }
+
+  Serial.println("Structure saved successfully.");
+}
+
+// --- Чтение: ищем по garageNumber и перезаписываем нужный элемент массива ---
+void loadGarageDataFromNVS() {
+  Serial.println("Loading structure from NVS...");
+
+  bool anyLoaded = false;
+  char key[16];
+
+  // Проходим по всем элементам массива (с текущими тестовыми/старыми данными)
+  for (int i = 0; i < GARAGES_COUNT; ++i) {
+    uint16_t num = garages[i].garageNumber;
+    if (num == 0) continue; // пропускаем пустые
+
+    // Проверяем, есть ли данные для этого номера гаража
+    snprintf(key, sizeof(key), "g%u_num", num);
+    
+    // Читаем garageNumber из NVS. Если ключа нет, вернётся 0
+    uint16_t savedNum = nvs.getUInt(key, 0);
+
+    if (savedNum != 0 && savedNum == num) {
+      // Данные есть и совпадают — читаем остальные поля
+      snprintf(key, sizeof(key), "g%u_meter", num);
+      garages[i].meterNumber = nvs.getULong(key, 0);
+
+      snprintf(key, sizeof(key), "g%u_read", num);
+      garages[i].odometerReading = nvs.getFloat(key, 0.0f);
+
+      snprintf(key, sizeof(key), "g%u_valid", num);
+      garages[i].isValid = nvs.getBool(key, false);
+
+      anyLoaded = true;
+      Serial.printf("Loaded data for garage %u\n", num);
+    }
+  }
+
+  if (anyLoaded) {
+    Serial.println("Structure loaded successfully.");
+  } else {
+    Serial.println("No saved data found in NVS. Keeping current values.");
+  }
+}
 
 //обработка команд терминала
 void handleCommand(const String& cmdRaw) {
@@ -497,7 +569,7 @@ void handleCommand(const String& cmdRaw) {
     Serial.print(F("Текущее время: "));
     Serial.println(now.timestamp());
   }
-  if (cmd == "pull") {
+  /*if (cmd == "pull") {
     //получаем данные пробега для гаража 404
    float reading = getOdometerForGarage(404);  
    String inputBuffer = "";      // буфер для накопления строки
@@ -508,9 +580,7 @@ void handleCommand(const String& cmdRaw) {
    Serial.print(s);
    s  = "box40="+s; 
    write_to_google_sheet(s);
-  } 
-
-
+  } */
 
   if (cmd == "spisok") {
     printGarageList();
@@ -584,7 +654,16 @@ if (cmd.startsWith("send all")) {
     return;
 }
 
-  Serial.println("Доступные: spisok, find <номер>, read <номер>, read all, send all, time, settime YYYY MM DD HH MM SS");
+if (cmd == "Save_struct") {
+    saveGarageDataToNVS();
+  }
+
+if (cmd == "Read_struct") {
+    loadGarageDataFromNVS();
+  } 
+  
+  
+  Serial.println("Доступные: spisok, find <номер>, read <номер>, read all, send all, time, settime YYYY MM DD HH MM SS, Save_struct, Read_struct ");
 }
 
 
@@ -635,12 +714,18 @@ Serial.begin(9600);  // Отладочный вывод через USB (UART0)
   // настраиваем сеть
 RS485Serial.begin(9600, SERIAL_8N1, SSerialRx, SSerialTx);  // UART1, пины RX=19, TX=17
 
+ // Открываем пространство имен (как «папка» в NVS)
+  nvs.begin("garage_data", false); // false = не удалять при ошибке
+  Serial.println("Setup done. Use 'Read_struct' to load saved data over test values.");
+  Serial.print("Total garages in array: ");
+  Serial.println(GARAGES_COUNT);
 // 5 пин в режим выхода
 pinMode(SerialControl, OUTPUT);
 
 // ставим на прием
 digitalWrite(SerialControl, RS485Receive);// По умолчанию — приём
 //delay(300);
+
 
 //настройка сети mqtt и wifi пока не используем
 //mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
