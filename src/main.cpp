@@ -30,7 +30,7 @@ extern "C" {
 //-------- Инициализация аппаратного UART (UART1)
 HardwareSerial RS485Serial(1);  // Используем UART1
 
-TimerHandle_t wifiReconnectTimer;
+TimerHandle_t wifiReconnectTimer = NULL;
 
 unsigned int crc16MODBUS(byte *s, int count) {
   unsigned int crcTable[] = {
@@ -122,10 +122,7 @@ unsigned long voltageP = 0; ///< Техническая переменная с�
 // логин и пароль сети WiFi
 const char* ssid = "MikroTik-1EA2D2";
 const char* password = "ferrari220";
-//const char* ssid = "US_WIFI";
-//const char* password = "beeline2022";
-//const char* ssid = "4G-UFI-3a43";
-//const char* password = "1234567890";
+
 String GOOGLE_SCRIPT_ID = "AKfycbwHpzQ8bA0wraHN7WdZJJ7oMgI4xG_gV070WzbCrgiyIDQEgr1O2D42vUslEp1gkkKL"; //ID Google таблички
 //String GOOGLE_SCRIPT_ID = "1Flzse1pfy-nzjjS-P8k3HPZ7YkLm4w85BFGZREPJXeo"; //ID Google таблички
 IPAddress ip;
@@ -266,7 +263,25 @@ GarageData garages[] = {
 };
 // определяем размер массива
 const int GARAGES_COUNT = sizeof(garages) / sizeof(garages[0]); // определяем размер массива
-// функция вывода в формате CVS
+int lastScanCount = 0;  // <-- сюда сохраняем количество сетей после Scan
+//const char* ssid = "US_WIFI";
+//const char* password = "beeline2022";
+//const char* ssid = "4G-UFI-3a43";
+//const char* password = "1234567890";
+
+// Пул доверенных сетей (дом и гараж)
+const char* trustedSSIDs[] = {
+  "MikroTik-1EA2D2",
+  "US_WIFI",
+  "4G-UFI-3a43"
+};
+const char* trustedPasswords[] = {
+  "ferrari220",
+  "beeline2022",
+  "1234567890"
+};
+const int TRUSTED_COUNT = sizeof(trustedSSIDs) / sizeof(trustedSSIDs[0]);
+
 
 //функция получения из структуры данных одо по номеру гаража
 float getOdometerForGarage(uint16_t targetNumber) {
@@ -541,6 +556,59 @@ void loadGarageDataFromNVS() {
   }
 }
 
+void doWifiScan() {
+  Serial.println("Starting Wi-Fi scan...");
+  WiFi.mode(WIFI_STA);
+
+  // Сканируем до 10 секунд, не показываем скрытые, пассивный режим
+  lastScanCount = WiFi.scanNetworks(10, false, true);
+
+  if (lastScanCount == 0) {
+    Serial.println("No networks found.");
+    return;
+  }
+
+  Serial.printf("%d networks found:\n", lastScanCount);
+  for (int i = 0; i < lastScanCount; ++i) {
+    Serial.printf("%d: %s (RSSI=%d)\n", i, WiFi.SSID(i).c_str(), WiFi.RSSI(i));
+  }
+}
+
+void handleConnectCommand(const String& cmdRaw) {
+  String cmd = cmdRaw;
+  cmd.trim();
+
+  int space1 = cmd.indexOf(' ');
+  if (space1 == -1) {
+    Serial.println("Invalid format. Use: Connect <index> <password>");
+    return;
+  }
+
+  int space2 = cmd.indexOf(' ', space1 + 1);
+  String idxStr = cmd.substring(space1 + 1, space2);
+  String pass = cmd.substring(space2 + 1);
+
+  int idx = idxStr.toInt();
+
+  // Проверяем по lastScanCount
+  if (idx < 0 || idx >= lastScanCount) {
+    Serial.println("Invalid network index. Run 'Scan' first.");
+    Serial.print("Last scan found ");
+    Serial.print(lastScanCount);
+    Serial.println(" networks.");
+    return;
+  }
+
+  const char* ssid = WiFi.SSID(idx).c_str();
+  Serial.print("Connecting to: ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, pass.c_str());
+
+  nvs.putString("last_manual_ssid", ssid);
+  nvs.putString("last_manual_pass", pass);
+}
+
 //обработка команд терминала
 void handleCommand(const String& cmdRaw) {
   String cmd = cmdRaw;
@@ -650,7 +718,14 @@ void handleCommand(const String& cmdRaw) {
 }
 
 if (cmd.startsWith("send all")) {
+    if (!WiFi.isConnected()) {
+    Serial.println("ERROR: No Wi-Fi connection. Cannot send data.");
+    Serial.println("Use 'Scan' to find networks, then 'Connect <index> <pass>' to connect.");
+    return;
+  }
+    Serial.println("Sending data to Google Sheets...");
     writeAllGarages(garages, GARAGES_COUNT);
+    Serial.println("Send complete.");
     return;
 }
 
@@ -661,6 +736,16 @@ if (cmd == "Save_struct") {
 if (cmd == "Read_struct") {
     loadGarageDataFromNVS();
   } 
+
+if (cmd == "Scan") {
+    doWifiScan();
+  }
+
+if (cmd.startsWith("Connect ")) {
+    handleConnectCommand(cmdRaw);
+  } 
+
+
   
   
   Serial.println("Доступные: spisok, find <номер>, read <номер>, read all, send all, time, settime YYYY MM DD HH MM SS, Save_struct, Read_struct ");
@@ -672,11 +757,28 @@ if (cmd == "Read_struct") {
   осуществляет подключение к сети.
  */
 void connectToWifi() {
-  Serial.println("Connecting to Wi-Fi...");
-             //  "Подключаемся к WiFi..."
-  WiFi.begin(ssid, password);
-IPAddress ip = WiFi.localIP();
+  Serial.println("Scanning for trusted Wi-Fi networks...");
+  WiFi.mode(WIFI_STA);
+  int n = WiFi.scanNetworks();
+  Serial.printf("%d networks found.\n", n);
+
+  // Ищем первую доверенную сеть из пула, которая видна
+  for (int t = 0; t < TRUSTED_COUNT; ++t) {
+    for (int i = 0; i < n; ++i) {
+      if (WiFi.SSID(i) == trustedSSIDs[t]) {
+        Serial.print("Found trusted network: ");
+        Serial.println(WiFi.SSID(i));
+        WiFi.begin(trustedSSIDs[t], trustedPasswords[t]);
+        return;
+      }
+    }
+  }
+
+  Serial.println("No trusted network found in range. Staying offline.");
 }
+
+
+
 
 
 
@@ -684,29 +786,30 @@ IPAddress ip = WiFi.localIP();
 
 //Функция переподключения к Wifi и MQTT  при обрыве связи
 void WiFiEvent(WiFiEvent_t event) {
-  Serial.printf("[WiFi-event] event: %d\n", event);
-    switch(event) {
+  switch (event) {
     case SYSTEM_EVENT_STA_GOT_IP:
-      Serial.println("WiFi connected");  //  "Подключились к WiFi"
-      Serial.println("IP address: ");  //  "IP-адрес: "
+      Serial.println("WiFi connected");
+      Serial.print("IP address: ");
       Serial.println(WiFi.localIP());
-      //connectToMqtt();  // FIX: ВКЛЮЧИТЬ КОГДА БУДЕМ РАБОТАТЬ С mqtt
+      // Если был таймер ожидания реконнекта — останавливаем его, мы уже на связи
+      if (wifiReconnectTimer != NULL) {
+        xTimerStop(wifiReconnectTimer, 0);
+      }
       break;
+
     case SYSTEM_EVENT_STA_DISCONNECTED:
-      Serial.println("WiFi lost connection");
-                 //  "WiFi-связь потеряна"
-      // делаем так, чтобы ESP32
-      // не переподключалась к MQTT
-      // во время переподключения к WiFi:
-      Serial.printf("SSID=");
-      Serial.println(ssid);
-      Serial.printf("PASS=");
-      Serial.println(password);
-      xTimerStop(mqttReconnectTimer, 0);
-      xTimerStart(wifiReconnectTimer, 0);
+      Serial.println("WiFi lost connection. Starting reconnect timer...");
+      
+      // Запускаем таймер: через 3 секунды вызовется connectToWifi()
+      if (wifiReconnectTimer != NULL) {
+        xTimerStart(wifiReconnectTimer, 0);
+      } else {
+        Serial.println("ERROR: wifiReconnectTimer not initialized!");
+      }
       break;
   }
 }
+
 
 
 void setup() {
@@ -727,9 +830,9 @@ digitalWrite(SerialControl, RS485Receive);// По умолчанию — при�
 //delay(300);
 
 
-//настройка сети mqtt и wifi пока не используем
+//настройка сети mqtt и wifi 
 //mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
-wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
+wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(3000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
 connectToWifi();
 WiFi.onEvent(WiFiEvent);
 
