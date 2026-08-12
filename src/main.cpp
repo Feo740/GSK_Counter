@@ -120,11 +120,10 @@ unsigned long read_18b20 = 0; ///< Техническая переменная �
 unsigned long voltageP = 0; ///< Техническая переменная счетчика таймера для снятия напр и тока
 
 // логин и пароль сети WiFi
-const char* ssid = "MikroTik-1EA2D2";
-const char* password = "ferrari220";
+//const char* ssid = "MikroTik-1EA2D2";
+//const char* password = "ferrari220";
 
 String GOOGLE_SCRIPT_ID = "AKfycbwHpzQ8bA0wraHN7WdZJJ7oMgI4xG_gV070WzbCrgiyIDQEgr1O2D42vUslEp1gkkKL"; //ID Google таблички
-//String GOOGLE_SCRIPT_ID = "1Flzse1pfy-nzjjS-P8k3HPZ7YkLm4w85BFGZREPJXeo"; //ID Google таблички
 IPAddress ip;
 
 RTC_DS3231 rtc; // объект для часов реального времени
@@ -264,10 +263,6 @@ GarageData garages[] = {
 // определяем размер массива
 const int GARAGES_COUNT = sizeof(garages) / sizeof(garages[0]); // определяем размер массива
 int lastScanCount = 0;  // <-- сюда сохраняем количество сетей после Scan
-//const char* ssid = "US_WIFI";
-//const char* password = "beeline2022";
-//const char* ssid = "4G-UFI-3a43";
-//const char* password = "1234567890";
 
 // Пул доверенных сетей (дом и гараж)
 const char* trustedSSIDs[] = {
@@ -850,18 +845,18 @@ while (!Serial) {}
  
   Wire.begin();
 
- // if (!rtc.begin()) {
-  //  Serial.println(F("Ошибка: модуль DS3231 не найден. Проверь I2C."));
-   // while (1) delay(10);
-  //}
+  if (!rtc.begin()) {
+    Serial.println(F("Ошибка: модуль DS3231 не найден. Проверь I2C."));
+    while (1) delay(10);
+  }
 
   // Если питание пропадало — ставим время компиляции
- // if (rtc.lostPower()) {
-    //Serial.println(F("RTC потерял питание. Устанавливаем время по компиляции..."));
-   // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  //}
+  if (rtc.lostPower()) {
+    Serial.println(F("RTC потерял питание. Устанавливаем время по компиляции..."));
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
 
- // printDateTime(rtc.now());
+  printDateTime(rtc.now());
 
 }
 
