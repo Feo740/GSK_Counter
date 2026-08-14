@@ -91,8 +91,19 @@ byte response[19];
 int byteReceived;
 int byteSend;
 int netAdr;
+
 //Массив для данных с терминала
 char incomingBytes[15];
+// Переменные для чтения команд из терминала без пропадающих символов
+const int MAX_CMD_LEN = 64;
+char cmdBuffer[MAX_CMD_LEN];
+int cmdIndex = 0;
+bool cmdReady = false;
+bool showPrompt = true;          // показать приглашение, когда ждём команду
+bool promptPending = false;      // флаг: приглашение ещё не напечатано в этом цикле
+
+
+
 
 // глобальная переменная для хранения результата пробега из счетчика.
 float r1;
@@ -205,7 +216,7 @@ Preferences nvs;
 //Заполняем массив струтур тестовыми значениями
 GarageData garages[] = {
   //тестовый счетчик
-  {2, 70, 0.0f, true},
+  //{2, 70, 0.0f, true},
 
   //головной счетчик 743
   {1, 43, 1.0f, true},
@@ -268,12 +279,14 @@ int lastScanCount = 0;  // <-- сюда сохраняем количество 
 const char* trustedSSIDs[] = {
   "MikroTik-1EA2D2",
   "US_WIFI",
-  "4G-UFI-3a43"
+  "4G-UFI-3a43",
+  "tp_link_4"
 };
 const char* trustedPasswords[] = {
   "ferrari220",
   "beeline2022",
-  "1234567890"
+  "1234567890",
+  "Beeline2012"
 };
 const int TRUSTED_COUNT = sizeof(trustedSSIDs) / sizeof(trustedSSIDs[0]);
 
@@ -603,7 +616,10 @@ void handleConnectCommand(const String& cmdRaw) {
   nvs.putString("last_manual_ssid", ssid);
   nvs.putString("last_manual_pass", pass);
 }
-
+//печатаем приглашение к вводу команды
+void showPrompt1() {
+  Serial.print("\r\nВведите команду: ");
+}
 //обработка команд терминала
 void handleCommand(const String& cmdRaw) {
   String cmd = cmdRaw;
@@ -621,35 +637,32 @@ void handleCommand(const String& cmdRaw) {
       rtc.adjust(newTime);
       Serial.print(F("Время установлено: "));
       printDateTime(newTime);
+      showPrompt1();
+      return;
     } else {
       Serial.println(F("Неверный формат. Используйте: settime YYYY MM DD HH MM SS"));
+      showPrompt1();
+      return;
     }
-    return;
+ 
   }
 
   if (cmd == "time") {
      DateTime now = rtc.now();
     Serial.print(F("Текущее время: "));
     Serial.println(now.timestamp());
-  }
-  /*if (cmd == "pull") {
-    //получаем данные пробега для гаража 404
-   float reading = getOdometerForGarage(404);  
-   String inputBuffer = "";      // буфер для накопления строки
-   char buffer[16];
-   dtostrf(reading, 0, 2, buffer);  // 0 = автоширина, 2 знака после запятой
-   String s(buffer);    
-   Serial.print(F("отправляем данные в гугл "));
-   Serial.print(s);
-   s  = "box40="+s; 
-   write_to_google_sheet(s);
-  } */
-
-  if (cmd == "spisok") {
-    printGarageList();
+    showPrompt1();
     return;
   }
 
+
+  if (cmd == "spisok") {
+    printGarageList();
+    showPrompt1();
+    return;
+  }
+
+ // показываем данные из опертивки по конкретному боксу
   if (cmd.startsWith("find ")) {
     String numStr = cmd.substring(5);
     uint16_t target = numStr.toInt();
@@ -664,16 +677,19 @@ void handleCommand(const String& cmdRaw) {
         dtostrf(garages[i].odometerReading, 8, 2, buf);
         Serial.println(buf);
         found = true;
+        showPrompt1();
         break;
       }
     }
     if (!found) {
       Serial.println("Гараж не найден.");
+      showPrompt1();
+      return;
     }
-    return;
+
   }
 
-  // функция записи в структуру
+  // функция записи в структуру в оперативку
   if (cmd.startsWith("read ")) {
     String numStr = cmd.substring(5);
     uint16_t target = numStr.toInt(); 
@@ -686,17 +702,19 @@ void handleCommand(const String& cmdRaw) {
         GetOdo(meterNumber_var);
         garages[i].odometerReading=r1; 
         found = true;
+        showPrompt1();
         break;
       }
     }
     if (!found) {
       Serial.println("Гараж не найден.");
+      showPrompt1();
+      return;
     }
-    return;
   }
 
   //функция записи всех значений в структуру
-  if (cmd.startsWith("read all")) {
+  if (cmd == "full read") {
         bool found = false; 
       for (int i = 0; i < GARAGES_COUNT; i++) {
         uint32_t meterNumber_var;       // номер счётчика 
@@ -704,46 +722,79 @@ void handleCommand(const String& cmdRaw) {
         GetOdo(meterNumber_var);
         garages[i].odometerReading=r1; 
         found = true;
-        break;
-      } 
+              } 
     if (!found) {
       Serial.println("Гараж не найден.");
+      showPrompt1();
+      return;
     }
+    showPrompt1();
     return;
 }
 
-if (cmd.startsWith("send all")) {
+if (cmd == "send all") {
     if (!WiFi.isConnected()) {
     Serial.println("ERROR: No Wi-Fi connection. Cannot send data.");
     Serial.println("Use 'Scan' to find networks, then 'Connect <index> <pass>' to connect.");
+    showPrompt1();
     return;
   }
     Serial.println("Sending data to Google Sheets...");
     writeAllGarages(garages, GARAGES_COUNT);
     Serial.println("Send complete.");
+    showPrompt1();
     return;
 }
 
-if (cmd == "Save_struct") {
+if (cmd == "Struct_save") {
     saveGarageDataToNVS();
+    showPrompt1();
+    return;
   }
 
-if (cmd == "Read_struct") {
+if (cmd == "Struct_read") {
     loadGarageDataFromNVS();
+    showPrompt1();
+    return;
   } 
 
 if (cmd == "Scan") {
     doWifiScan();
+    showPrompt1();
+    return;
   }
 
 if (cmd.startsWith("Connect ")) {
     handleConnectCommand(cmdRaw);
+    showPrompt1();
+    return;
   } 
 
+  if (cmd == "clear") {
+  Serial.write(27); Serial.write('['); Serial.write('2'); Serial.write('J'); // очистить экран
+  showPrompt1();
+  return;
+}
 
-  
-  
-  Serial.println("Доступные: spisok, find <номер>, read <номер>, read all, send all, time, settime YYYY MM DD HH MM SS, Save_struct, Read_struct ");
+
+if (cmd == "help") {
+  Serial.println("Доступные команды:");
+  Serial.println("  spisok                 — список гаражей");
+  Serial.println("  find <номер>           — найти гараж по номеру");
+  Serial.println("  read <номер>           — считать показания для гаража");
+  Serial.println("  full read              — считать показания для всех гаражей");
+  Serial.println("  send all               — отправить все данные в Google Sheets");
+  Serial.println("  time                   — текущее время");
+  Serial.println("  settime YYYY MM DD HH MM SS — установить время");
+  Serial.println("  Struct_save            — сохранить структуру в NVS");
+  Serial.println("  Struct_read            — загрузить структуру из NVS");
+  Serial.println("  Scan                   — сканирование Wi‑Fi сетей");
+  Serial.println("  Connect <index> <pass> — подключиться к сети по индексу");
+  Serial.println("  Clear                  — очистка экрана");
+  showPrompt1();
+  return;
+}
+
 }
 
 
@@ -1146,48 +1197,38 @@ void voltage(){
 
 
 void loop() {
-
-/* пока закомментируем, т.к. отрабатываем меню
-// Снятие данных счетчика раз в сутки
-if ((millis() - p_counter) >= period_counter) {
-  p_counter = millis();
-  odo();
-  voltage();
-  current();
-}
-
-// снятие данных напряжения и тока по таймеру
-if ((millis() - voltageP) >= period_voltage) {
-  voltageP = millis();
-  voltage();
-  delay(500);
-  current();
-}
-
-*/
-
-if (Serial.available()) {
+  // Чтение и эхо
+  while (Serial.available() > 0) {
     char c = Serial.read();
 
-    // ЭХО: отправляем символ обратно, чтобы видеть ввод
-    Serial.write(c);
+    Serial.write(c);             // чтобы ты видел, что печатаешь
 
-    if (c == '\n' || c == '\r') {
-      newCommand = true;
-      inputBuffer.trim();
-    } else {
-      inputBuffer += c;
+    if (c == '\r') {
+      continue;
+    }
+
+    if (c == '\n') {
+      cmdBuffer[cmdIndex] = '\0';
+      cmdReady = true;
+      cmdIndex = 0;
+    } else if (cmdIndex < MAX_CMD_LEN - 1) {
+      cmdBuffer[cmdIndex++] = c;
     }
   }
 
-  if (newCommand && !inputBuffer.isEmpty()) {
-    handleCommand(inputBuffer);
-    inputBuffer = "";
-    newCommand = false;
-    Serial.print("\nВведите команду: ");
-  }
+  // Обработка готовой команды
+  if (cmdReady) {
+    cmdReady = false;
+
+    String cmd(cmdBuffer);
+    cmd.trim();
+    if (!cmd.isEmpty()) {
+      handleCommand(cmd);        // внутри handleCommand теперь будет приглашение
+    }
   }
 
+  // --- остальной код loop (таймеры, опрос датчиков и т.п.) ---
+}
 
 
 /*
